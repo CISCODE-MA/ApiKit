@@ -1,0 +1,49 @@
+name: '🐛 Bug report'
+description: Report something that isn’t working
+title: '[Bug]: '
+labels: ['bug']
+body:
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: What version are you using?
+      placeholder: 'e.g. 1.2.3'
+    validations:
+      required: true
+
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: Describe the bug clearly.
+      placeholder: 'Steps, logs, screenshots...'
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Reproduction steps
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: |
+        Node:
+        NestJS:
+        OS:

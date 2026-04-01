@@ -1,0 +1,39 @@
+# Source code
+src/
+test/
+__tests__/
+**/jest.config.ts
+**/vitest.config.ts
+**/*.spec.ts
+**/*.test.ts
+**/*.spec.tsx
+**/*.test.tsx
+
+# Configuration files
+tsconfig.json
+tsconfig.build.json
+tsconfig.eslint.json
+eslint.config.js
+.prettierrc.json
+.prettierignore
+.editorconfig
+.env.example
+.gitignore
+.npmrc
+
+# Documentation & GitHub
+*.md
+CONTRIBUTING.md
+CODE_OF_CONDUCT
+SECURITY
+.github/
+docs/
+
+# Other
+.husky/
+.changeset/
+.git/
+.DS_Store
+*.log
+node_modules/
+coverage/

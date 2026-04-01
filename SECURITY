@@ -1,0 +1,46 @@
+# Security Policy
+
+The CISCODE team takes security seriously.
+
+---
+
+## Supported Versions
+
+Only the latest released minor version receives security updates.
+
+| Version  | Supported |
+| -------- | --------- |
+| >= 1.x.x | ✅ Yes    |
+| < 1.x.x  | ❌ No     |
+
+---
+
+## Reporting a Vulnerability
+
+⚠️ **Do NOT open a public GitHub issue for security vulnerabilities.**
+
+Instead, please email us with:
+
+- Description of the vulnerability
+- Steps to reproduce
+- Potential impact
+- Suggested fix (if any)
+
+We will acknowledge your report within 48 hours and provide updates.
+
+---
+
+## Security Best Practices
+
+When using this package:
+
+- Keep dependencies updated
+- Never expose API keys or secrets in component code
+- Use secure HTTP headers (CSP, X-Frame-Options, etc.)
+- Validate all data from external sources
+- Use HTTPS for all API communication
+- Enable security scanning in your CI/CD pipeline
+
+---
+
+**Thank you for responsibly disclosing security vulnerabilities.**
