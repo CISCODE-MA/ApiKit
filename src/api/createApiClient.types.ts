@@ -3,6 +3,8 @@ export interface ApiClientConfig {
   timeout?: number;
   headers?: Record<string, string>;
   getToken?: () => string | null;
+  retry?: number;
+  retryDelay?: number;
 }
 
 export interface RequestConfig {
