@@ -1,4 +1,3 @@
-export { ApiError } from './ApiError';
 export { createApiClient } from './createApiClient';
 export type {
   ApiClient,

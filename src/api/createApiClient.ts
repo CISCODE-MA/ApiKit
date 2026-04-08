@@ -1,5 +1,4 @@
-import axios, { AxiosError } from 'axios';
-import { ApiError } from './ApiError';
+import axios from 'axios';
 import type {
   ApiClient,
   ApiClientConfig,
@@ -10,31 +9,6 @@ import type {
   RequestInterceptor,
   ResponseInterceptor,
 } from './createApiClient.types';
-
-const RETRYABLE_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
-
-function toApiError(error: unknown): ApiError {
-  if (error instanceof ApiError) {
-    return error;
-  }
-
-  if (error instanceof AxiosError) {
-    if (error.response) {
-      const { status, data } = error.response;
-      return new ApiError(error.message, status, `HTTP_${status}`, data);
-    }
-    return new ApiError(error.message || 'Network error', 0, 'NETWORK_ERROR');
-  }
-
-  const message = error instanceof Error ? error.message : String(error);
-  return new ApiError(message, 0, 'NETWORK_ERROR');
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
-  });
-}
 
 function toInterceptedResponse(axiosRes: {
   status: number;
@@ -55,9 +29,6 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
     timeout: config.timeout,
     headers: config.headers,
   });
-
-  const maxRetries = config.retry ?? 0;
-  const baseDelay = config.retryDelay ?? 500;
 
   const requestInterceptors: RequestInterceptor[] = [];
   const responseInterceptors: ResponseInterceptor[] = [];
@@ -108,85 +79,58 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
       return axiosResponse;
     },
     (error: unknown) => {
-      const apiError = toApiError(error);
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
       for (const interceptor of errorInterceptors) {
-        interceptor(apiError);
+        interceptor(normalizedError);
       }
-      return Promise.reject(apiError);
+      return Promise.reject(normalizedError);
     },
   );
 
-  async function withRetry<T>(operation: () => Promise<T>): Promise<T> {
-    for (let attempt = 0; ; attempt++) {
-      try {
-        return await operation();
-      } catch (error: unknown) {
-        const apiError = error instanceof ApiError ? error : toApiError(error);
-
-        if (attempt < maxRetries && RETRYABLE_STATUSES.has(apiError.status)) {
-          await delay(baseDelay * 2 ** attempt);
-          continue;
-        }
-
-        throw apiError;
-      }
-    }
-  }
-
   return {
     async get<T>(url: string, requestConfig?: RequestConfig): Promise<T> {
-      return withRetry(async () => {
-        const response = await instance.get<T>(url, {
-          headers: requestConfig?.headers,
-          params: requestConfig?.params,
-          signal: requestConfig?.signal,
-        });
-        return response.data;
+      const response = await instance.get<T>(url, {
+        headers: requestConfig?.headers,
+        params: requestConfig?.params,
+        signal: requestConfig?.signal,
       });
+      return response.data;
     },
 
     async post<T>(url: string, data?: unknown, requestConfig?: RequestConfig): Promise<T> {
-      return withRetry(async () => {
-        const response = await instance.post<T>(url, data, {
-          headers: requestConfig?.headers,
-          params: requestConfig?.params,
-          signal: requestConfig?.signal,
-        });
-        return response.data;
+      const response = await instance.post<T>(url, data, {
+        headers: requestConfig?.headers,
+        params: requestConfig?.params,
+        signal: requestConfig?.signal,
       });
+      return response.data;
     },
 
     async put<T>(url: string, data?: unknown, requestConfig?: RequestConfig): Promise<T> {
-      return withRetry(async () => {
-        const response = await instance.put<T>(url, data, {
-          headers: requestConfig?.headers,
-          params: requestConfig?.params,
-          signal: requestConfig?.signal,
-        });
-        return response.data;
+      const response = await instance.put<T>(url, data, {
+        headers: requestConfig?.headers,
+        params: requestConfig?.params,
+        signal: requestConfig?.signal,
       });
+      return response.data;
     },
 
     async patch<T>(url: string, data?: unknown, requestConfig?: RequestConfig): Promise<T> {
-      return withRetry(async () => {
-        const response = await instance.patch<T>(url, data, {
-          headers: requestConfig?.headers,
-          params: requestConfig?.params,
-          signal: requestConfig?.signal,
-        });
-        return response.data;
+      const response = await instance.patch<T>(url, data, {
+        headers: requestConfig?.headers,
+        params: requestConfig?.params,
+        signal: requestConfig?.signal,
       });
+      return response.data;
     },
 
     async delete<T>(url: string, requestConfig?: RequestConfig): Promise<T> {
-      return withRetry(async () => {
-        const response = await instance.delete<T>(url, {
-          headers: requestConfig?.headers,
-          params: requestConfig?.params,
-          signal: requestConfig?.signal,
-        });
-        return response.data;
+      const response = await instance.delete<T>(url, {
+        headers: requestConfig?.headers,
+        params: requestConfig?.params,
+        signal: requestConfig?.signal,
       });
+      return response.data;
     },
 
     addRequestInterceptor(interceptor: RequestInterceptor): void {
