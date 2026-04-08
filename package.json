@@ -9,6 +9,10 @@
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CISCODE-MA/ApiKit.git"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
