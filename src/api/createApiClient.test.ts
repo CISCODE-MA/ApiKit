@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createApiClient } from './createApiClient';
+import { ApiError } from './ApiError';
 import type { ApiClient } from './createApiClient.types';
 
 type InterceptorFn = (...args: unknown[]) => unknown;
@@ -72,16 +73,17 @@ function createMockInstance() {
 
     const responseData = mockResponses[`${method}:${url}`];
     if (responseData instanceof Error) {
+      let rejection: unknown = responseData;
       for (const h of interceptors.response.handlers) {
         if (h.rejected) {
           try {
             await h.rejected(responseData);
-          } catch {
-            // error interceptors may not stop propagation
+          } catch (e: unknown) {
+            rejection = e;
           }
         }
       }
-      throw responseData;
+      throw rejection;
     }
 
     let response = { status: 200, headers: {}, data: responseData };
@@ -118,16 +120,41 @@ function createMockInstance() {
 
 let mockState: ReturnType<typeof createMockInstance>;
 
-vi.mock('axios', () => ({
-  default: {
-    create: vi.fn(() => {
-      mockState = createMockInstance();
-      return mockState.instance;
-    }),
-  },
-}));
+vi.mock('axios', () => {
+  class AxiosErrorMock extends Error {
+    isAxiosError = true;
+    response?: { status: number; data: unknown };
 
-import axios from 'axios';
+    constructor(
+      message: string,
+      _code?: string,
+      _config?: unknown,
+      _request?: unknown,
+      response?: { status: number; data: unknown },
+    ) {
+      super(message);
+      this.name = 'AxiosError';
+      this.response = response;
+    }
+  }
+
+  return {
+    default: {
+      create: vi.fn(() => {
+        mockState = createMockInstance();
+        return mockState.instance;
+      }),
+    },
+    AxiosError: AxiosErrorMock,
+  };
+});
+
+import axios, { AxiosError } from 'axios';
+
+function createAxiosError(message: string, response?: { status: number; data: unknown }) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return new AxiosError(message, undefined, undefined, undefined, response as any);
+}
 
 describe('createApiClient', () => {
   let client: ApiClient;
@@ -136,6 +163,8 @@ describe('createApiClient', () => {
     vi.clearAllMocks();
     client = createApiClient({ baseURL: 'https://api.example.com' });
   });
+
+  // ─── AC1: Config ──────────────────────────────────────────────────
 
   it('should create an axios instance with the provided config', () => {
     createApiClient({
@@ -160,6 +189,8 @@ describe('createApiClient', () => {
       headers: undefined,
     });
   });
+
+  // ─── AC1: All 5 HTTP methods tested with mock responses ──────────
 
   describe('get', () => {
     it('should call instance.get and return response.data', async () => {
@@ -202,6 +233,18 @@ describe('createApiClient', () => {
       expect(mockState.instance.post).toHaveBeenCalled();
       expect(result).toEqual(responseData);
     });
+
+    it('should forward request config options on post', async () => {
+      mockState.setResponse('post', '/users', {});
+
+      await client.post('/users', { name: 'Test' }, { headers: { 'X-Token': 'abc' } });
+
+      expect(mockState.instance.post).toHaveBeenCalledWith(
+        '/users',
+        { name: 'Test' },
+        { headers: { 'X-Token': 'abc' }, params: undefined, signal: undefined },
+      );
+    });
   });
 
   describe('put', () => {
@@ -241,15 +284,94 @@ describe('createApiClient', () => {
       expect(mockState.instance.delete).toHaveBeenCalled();
       expect(result).toEqual({ success: true });
     });
-  });
 
-  describe('error propagation', () => {
-    it('should propagate errors from the underlying HTTP call', async () => {
-      mockState.setResponse('get', '/fail', new Error('Network Error'));
+    it('should forward request config options on delete', async () => {
+      mockState.setResponse('delete', '/users/1', {});
 
-      await expect(client.get('/fail')).rejects.toThrow('Network Error');
+      const controller = new AbortController();
+      await client.delete('/users/1', { params: { hard: true }, signal: controller.signal });
+
+      expect(mockState.instance.delete).toHaveBeenCalledWith('/users/1', {
+        headers: undefined,
+        params: { hard: true },
+        signal: controller.signal,
+      });
     });
   });
+
+  // ─── AC4 + AC5: ApiError shape and network error mapping ─────────
+
+  describe('error mapping to ApiError', () => {
+    it('should map HTTP errors to ApiError with status, code, message, and details', async () => {
+      const axiosError = createAxiosError('Not Found', {
+        status: 404,
+        data: { detail: 'Resource missing' },
+      });
+      mockState.setResponse('get', '/missing', axiosError);
+
+      try {
+        await client.get('/missing');
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        const apiError = error as ApiError;
+        expect(apiError.name).toBe('ApiError');
+        expect(apiError.message).toBe('Not Found');
+        expect(apiError.status).toBe(404);
+        expect(apiError.code).toBe('HTTP_404');
+        expect(apiError.details).toEqual({ detail: 'Resource missing' });
+      }
+    });
+
+    it('should map network errors to status 0 and code NETWORK_ERROR', async () => {
+      const axiosError = createAxiosError('Network Error');
+      mockState.setResponse('get', '/down', axiosError);
+
+      try {
+        await client.get('/down');
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        const apiError = error as ApiError;
+        expect(apiError.status).toBe(0);
+        expect(apiError.code).toBe('NETWORK_ERROR');
+      }
+    });
+
+    it('should map generic non-Axios errors to ApiError with NETWORK_ERROR', async () => {
+      mockState.setResponse('get', '/fail', new Error('Unknown'));
+
+      try {
+        await client.get('/fail');
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        const apiError = error as ApiError;
+        expect(apiError.status).toBe(0);
+        expect(apiError.code).toBe('NETWORK_ERROR');
+        expect(apiError.message).toBe('Unknown');
+      }
+    });
+
+    it('should map errors on post requests to ApiError', async () => {
+      const axiosError = createAxiosError('Unprocessable', {
+        status: 422,
+        data: { errors: ['name required'] },
+      });
+      mockState.setResponse('post', '/users', axiosError);
+
+      try {
+        await client.post('/users', { name: '' });
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        expect((error as ApiError).status).toBe(422);
+        expect((error as ApiError).details).toEqual({ errors: ['name required'] });
+      }
+    });
+  });
+
+  // ─── AC3: Multiple interceptors execution order ───────────────────
 
   describe('addRequestInterceptor', () => {
     it('should execute request interceptors in registration order', async () => {
@@ -268,8 +390,13 @@ describe('createApiClient', () => {
         return req;
       });
 
+      client.addRequestInterceptor((req) => {
+        order.push(3);
+        return req;
+      });
+
       await client.get('/test');
-      expect(order).toEqual([1, 2]);
+      expect(order).toEqual([1, 2, 3]);
     });
   });
 
@@ -288,8 +415,13 @@ describe('createApiClient', () => {
         return res;
       });
 
+      client.addResponseInterceptor((res) => {
+        order.push(3);
+        return res;
+      });
+
       await client.get('/test');
-      expect(order).toEqual([1, 2]);
+      expect(order).toEqual([1, 2, 3]);
     });
 
     it('should allow response interceptors to transform data', async () => {
@@ -307,7 +439,8 @@ describe('createApiClient', () => {
   describe('addErrorInterceptor', () => {
     it('should execute error interceptors in registration order', async () => {
       const order: number[] = [];
-      mockState.setResponse('get', '/fail', new Error('fail'));
+      const axiosError = createAxiosError('fail', { status: 500, data: null });
+      mockState.setResponse('get', '/fail', axiosError);
 
       client.addErrorInterceptor(() => {
         order.push(1);
@@ -317,12 +450,17 @@ describe('createApiClient', () => {
         order.push(2);
       });
 
+      client.addErrorInterceptor(() => {
+        order.push(3);
+      });
+
       await expect(client.get('/fail')).rejects.toThrow('fail');
-      expect(order).toEqual([1, 2]);
+      expect(order).toEqual([1, 2, 3]);
     });
 
     it('should still reject the promise after error interceptors run', async () => {
-      mockState.setResponse('get', '/fail', new Error('boom'));
+      const axiosError = createAxiosError('boom', { status: 400, data: null });
+      mockState.setResponse('get', '/fail', axiosError);
 
       client.addErrorInterceptor(() => {
         /* logged */
@@ -330,7 +468,22 @@ describe('createApiClient', () => {
 
       await expect(client.get('/fail')).rejects.toThrow('boom');
     });
+
+    it('should receive ApiError instances in error interceptors', async () => {
+      const axiosError = createAxiosError('Server Error', { status: 500, data: null });
+      mockState.setResponse('get', '/err', axiosError);
+
+      let receivedError: Error | undefined;
+      client.addErrorInterceptor((err) => {
+        receivedError = err;
+      });
+
+      await expect(client.get('/err')).rejects.toThrow();
+      expect(receivedError).toBeInstanceOf(ApiError);
+    });
   });
+
+  // ─── AC2: Token injector ──────────────────────────────────────────
 
   describe('getToken auth interceptor', () => {
     it('should inject Authorization header when getToken returns a value', async () => {
@@ -376,6 +529,268 @@ describe('createApiClient', () => {
 
       await tokenClient.get('/test');
       expect(order).toEqual(['token', 'custom']);
+    });
+
+    it('should call getToken on every request', async () => {
+      let callCount = 0;
+      const tokenClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        getToken: () => {
+          callCount++;
+          return 'tok';
+        },
+      });
+      mockState.setResponse('get', '/a', {});
+      mockState.setResponse('get', '/b', {});
+
+      await tokenClient.get('/a');
+      await tokenClient.get('/b');
+
+      expect(callCount).toBe(2);
+    });
+  });
+
+  // ─── AC6 + AC7 + AC8: Retry with exponential backoff ─────────────
+
+  describe('retry with exponential backoff', () => {
+    it('should retry retryable status codes up to configured retry count', async () => {
+      let callCount = 0;
+      const retryClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        retry: 2,
+        retryDelay: 0,
+      });
+
+      const originalGet = mockState.instance.get;
+      mockState.instance.get = vi.fn((url: string, config?: unknown) => {
+        callCount++;
+        if (callCount <= 2) {
+          return Promise.reject(createAxiosError('Server Error', { status: 503, data: null }));
+        }
+        return originalGet(url, config);
+      });
+      mockState.setResponse('get', '/flaky', { ok: true });
+
+      const result = await retryClient.get('/flaky');
+      expect(result).toEqual({ ok: true });
+      expect(callCount).toBe(3);
+    });
+
+    it('should apply exponential backoff: retryDelay * 2^attempt', async () => {
+      const delays: number[] = [];
+      const originalSetTimeout = globalThis.setTimeout;
+      vi.stubGlobal('setTimeout', (fn: () => void, ms?: number) => {
+        if (ms !== undefined && ms > 0) delays.push(ms);
+        return originalSetTimeout(fn, 0);
+      });
+
+      const retryClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        retry: 3,
+        retryDelay: 500,
+      });
+
+      let callCount = 0;
+      mockState.instance.get = vi.fn(() => {
+        callCount++;
+        if (callCount <= 3) {
+          return Promise.reject(
+            createAxiosError('Service Unavailable', { status: 503, data: null }),
+          );
+        }
+        return Promise.resolve({ status: 200, headers: {}, data: { ok: true } });
+      });
+
+      const result = await retryClient.get('/backoff');
+      expect(result).toEqual({ ok: true });
+      expect(delays).toEqual([500, 1000, 2000]);
+
+      vi.unstubAllGlobals();
+    });
+
+    it('should verify second delay is approximately 2x the first', async () => {
+      const delays: number[] = [];
+      const originalSetTimeout = globalThis.setTimeout;
+      vi.stubGlobal('setTimeout', (fn: () => void, ms?: number) => {
+        if (ms !== undefined && ms > 0) delays.push(ms);
+        return originalSetTimeout(fn, 0);
+      });
+
+      const retryClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        retry: 2,
+        retryDelay: 100,
+      });
+
+      let callCount = 0;
+      mockState.instance.get = vi.fn(() => {
+        callCount++;
+        if (callCount <= 2) {
+          return Promise.reject(createAxiosError('Error', { status: 500, data: null }));
+        }
+        return Promise.resolve({ status: 200, headers: {}, data: {} });
+      });
+
+      await retryClient.get('/timing');
+      expect(delays[1]).toBe(delays[0] * 2);
+
+      vi.unstubAllGlobals();
+    });
+
+    it('should not retry on 400', async () => {
+      const retryClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        retry: 3,
+        retryDelay: 0,
+      });
+
+      let callCount = 0;
+      mockState.instance.get = vi.fn(() => {
+        callCount++;
+        return Promise.reject(createAxiosError('Bad Request', { status: 400, data: null }));
+      });
+
+      await expect(retryClient.get('/bad')).rejects.toThrow();
+      expect(callCount).toBe(1);
+    });
+
+    it('should not retry on 401', async () => {
+      const retryClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        retry: 3,
+        retryDelay: 0,
+      });
+
+      let callCount = 0;
+      mockState.instance.get = vi.fn(() => {
+        callCount++;
+        return Promise.reject(createAxiosError('Unauthorized', { status: 401, data: null }));
+      });
+
+      await expect(retryClient.get('/unauth')).rejects.toThrow();
+      expect(callCount).toBe(1);
+    });
+
+    it('should not retry on 403', async () => {
+      const retryClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        retry: 3,
+        retryDelay: 0,
+      });
+
+      let callCount = 0;
+      mockState.instance.get = vi.fn(() => {
+        callCount++;
+        return Promise.reject(createAxiosError('Forbidden', { status: 403, data: null }));
+      });
+
+      await expect(retryClient.get('/forbidden')).rejects.toThrow();
+      expect(callCount).toBe(1);
+    });
+
+    it('should not retry on 404', async () => {
+      const retryClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        retry: 3,
+        retryDelay: 0,
+      });
+
+      let callCount = 0;
+      mockState.instance.get = vi.fn(() => {
+        callCount++;
+        return Promise.reject(createAxiosError('Not Found', { status: 404, data: null }));
+      });
+
+      await expect(retryClient.get('/notfound')).rejects.toThrow();
+      expect(callCount).toBe(1);
+    });
+
+    it('should retry on each retryable status: 408, 429, 500, 502, 503, 504', async () => {
+      const retryableStatuses = [408, 429, 500, 502, 503, 504];
+
+      for (const status of retryableStatuses) {
+        const retryClient = createApiClient({
+          baseURL: 'https://api.example.com',
+          retry: 1,
+          retryDelay: 0,
+        });
+
+        let callCount = 0;
+        mockState.instance.get = vi.fn(() => {
+          callCount++;
+          if (callCount === 1) {
+            return Promise.reject(createAxiosError(`Error ${status}`, { status, data: null }));
+          }
+          return Promise.resolve({ status: 200, headers: {}, data: { ok: true } });
+        });
+
+        const result = await retryClient.get('/retryable');
+        expect(result).toEqual({ ok: true });
+        expect(callCount).toBe(2);
+      }
+    });
+
+    it('should fail after exhausting all retries', async () => {
+      const retryClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        retry: 2,
+        retryDelay: 0,
+      });
+
+      mockState.instance.get = vi.fn(() =>
+        Promise.reject(createAxiosError('Server Error', { status: 500, data: null })),
+      );
+
+      try {
+        await retryClient.get('/always-fail');
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+        expect((error as ApiError).status).toBe(500);
+      }
+      expect(mockState.instance.get).toHaveBeenCalledTimes(3);
+    });
+
+    it('should not retry when retry is 0 (default)', async () => {
+      mockState.instance.get = vi.fn(() =>
+        Promise.reject(createAxiosError('Server Error', { status: 500, data: null })),
+      );
+
+      try {
+        await client.get('/no-retry');
+        expect.unreachable();
+      } catch (error) {
+        expect(error).toBeInstanceOf(ApiError);
+      }
+      expect(mockState.instance.get).toHaveBeenCalledTimes(1);
+    });
+
+    it('should use default retryDelay of 500ms when not specified', async () => {
+      const delays: number[] = [];
+      const originalSetTimeout = globalThis.setTimeout;
+      vi.stubGlobal('setTimeout', (fn: () => void, ms?: number) => {
+        if (ms !== undefined && ms > 0) delays.push(ms);
+        return originalSetTimeout(fn, 0);
+      });
+
+      const retryClient = createApiClient({
+        baseURL: 'https://api.example.com',
+        retry: 1,
+      });
+
+      let callCount = 0;
+      mockState.instance.get = vi.fn(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.reject(createAxiosError('Error', { status: 500, data: null }));
+        }
+        return Promise.resolve({ status: 200, headers: {}, data: {} });
+      });
+
+      await retryClient.get('/default-delay');
+      expect(delays[0]).toBe(500);
+
+      vi.unstubAllGlobals();
     });
   });
 });
