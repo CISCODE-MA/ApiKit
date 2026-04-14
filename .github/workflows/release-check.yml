@@ -36,7 +36,7 @@ jobs:
         run: npm ci
 
       - name: Audit
-        run: npm audit --production
+        run: npm audit --omit=dev
 
       - name: Format
         run: npm run format
@@ -54,6 +54,7 @@ jobs:
         run: npm run build
 
       - name: SonarCloud Scan
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -63,10 +64,12 @@ jobs:
             -Dsonar.organization=${{ env.SONAR_ORGANIZATION }}
             -Dsonar.projectKey=${{ env.SONAR_PROJECT_KEY }}
             -Dsonar.sources=src
-            -Dsonar.tests=test
+            -Dsonar.tests=src
+            -Dsonar.test.inclusions=src/**/*.test.ts,src/**/*.test.tsx,src/**/*.spec.ts,src/__tests__/**
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
 
       - name: SonarCloud Quality Gate
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 10
         env:

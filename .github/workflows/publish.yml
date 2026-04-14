@@ -53,6 +53,16 @@ jobs:
             exit 1
           fi
 
+          TAG_COMMIT=$(git rev-list -n 1 "$TAG" 2>/dev/null || echo "")
+          HEAD_COMMIT=$(git rev-parse HEAD)
+
+          if [[ "$TAG_COMMIT" != "$HEAD_COMMIT" ]]; then
+            echo "❌ ERROR: Tag $TAG does not point to HEAD"
+            echo "  Tag points to:  $TAG_COMMIT"
+            echo "  HEAD is:        $HEAD_COMMIT"
+            exit 1
+          fi
+
           echo "✅ package.json version: $PKG_VERSION"
           echo "✅ Tag $TAG exists in repo"
           echo "TAG_VERSION=$TAG" >> $GITHUB_ENV

@@ -1,3 +1,5 @@
+import type { ApiError } from './ApiError';
+
 export interface ApiClientConfig {
   baseURL: string;
   timeout?: number;
@@ -29,7 +31,7 @@ export interface InterceptedResponse {
 
 export type RequestInterceptor = (request: InterceptedRequest) => InterceptedRequest;
 export type ResponseInterceptor = (response: InterceptedResponse) => InterceptedResponse;
-export type ErrorInterceptor = (error: Error) => void;
+export type ErrorInterceptor = (error: ApiError) => void;
 
 export interface ApiClient {
   get<T>(url: string, config?: RequestConfig): Promise<T>;
