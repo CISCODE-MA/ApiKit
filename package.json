@@ -1,7 +1,7 @@
 {
-  "name": "@ciscode/reactts-developerkit",
-  "version": "1.0.0",
-  "description": "React TypeScript hybrid library template (components + hooks + utils).",
+  "name": "@ciscode/api-kit",
+  "version": "0.1.0",
+  "description": "Typed HTTP client for TypeScript — wraps Axios with zero leaky abstractions.",
   "license": "MIT",
   "private": false,
   "type": "module",
@@ -9,6 +9,10 @@
   "files": [
     "dist"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CISCODE-MA/ApiKit.git"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -80,5 +84,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "axios": "^1.15.0"
   }
 }
