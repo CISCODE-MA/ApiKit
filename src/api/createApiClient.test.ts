@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { createApiClient } from './createApiClient';
 import { ApiError } from './ApiError';
 import type { ApiClient } from './createApiClient.types';
@@ -487,16 +487,21 @@ describe('createApiClient', () => {
 
   describe('getToken auth interceptor', () => {
     it('should inject Authorization header when getToken returns a value', async () => {
+      const capturedHeaders: Record<string, string>[] = [];
       const tokenClient = createApiClient({
         baseURL: 'https://api.example.com',
         getToken: () => 'my-token-123',
+      });
+      tokenClient.addRequestInterceptor((req) => {
+        capturedHeaders.push({ ...req.headers });
+        return req;
       });
       mockState.setResponse('get', '/secure', { data: 'secret' });
 
       await tokenClient.get('/secure');
 
-      const requestCall = mockState.instance.get.mock.calls[0];
-      expect(requestCall).toBeDefined();
+      expect(capturedHeaders[0]).toBeDefined();
+      expect(capturedHeaders[0]['Authorization']).toBe('Bearer my-token-123');
     });
 
     it('should skip Authorization header when getToken returns null', async () => {
@@ -553,6 +558,10 @@ describe('createApiClient', () => {
   // ─── AC6 + AC7 + AC8: Retry with exponential backoff ─────────────
 
   describe('retry with exponential backoff', () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
     it('should retry retryable status codes up to configured retry count', async () => {
       let callCount = 0;
       const retryClient = createApiClient({
@@ -604,8 +613,6 @@ describe('createApiClient', () => {
       const result = await retryClient.get('/backoff');
       expect(result).toEqual({ ok: true });
       expect(delays).toEqual([500, 1000, 2000]);
-
-      vi.unstubAllGlobals();
     });
 
     it('should verify second delay is approximately 2x the first', async () => {
@@ -633,8 +640,6 @@ describe('createApiClient', () => {
 
       await retryClient.get('/timing');
       expect(delays[1]).toBe(delays[0] * 2);
-
-      vi.unstubAllGlobals();
     });
 
     it('should not retry on 400', async () => {
@@ -789,8 +794,6 @@ describe('createApiClient', () => {
 
       await retryClient.get('/default-delay');
       expect(delays[0]).toBe(500);
-
-      vi.unstubAllGlobals();
     });
   });
 });

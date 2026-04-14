@@ -36,15 +36,39 @@ function delay(ms: number): Promise<void> {
   });
 }
 
+function normalizeHeaders(headers: unknown): Record<string, string> {
+  if (!headers || typeof headers !== 'object') {
+    return {};
+  }
+
+  const source =
+    'toJSON' in headers && typeof (headers as Record<string, unknown>).toJSON === 'function'
+      ? (headers as { toJSON(): Record<string, unknown> }).toJSON()
+      : headers;
+
+  if (!source || typeof source !== 'object') {
+    return {};
+  }
+
+  const normalized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (Array.isArray(value)) {
+      normalized[key] = value.map((item) => String(item)).join(', ');
+    } else if (value != null) {
+      normalized[key] = String(value);
+    }
+  }
+  return normalized;
+}
+
 function toInterceptedResponse(axiosRes: {
   status: number;
   headers: unknown;
   data: unknown;
 }): InterceptedResponse {
-  const raw = axiosRes.headers as Record<string, string> | undefined;
   return {
     status: axiosRes.status,
-    headers: raw ?? {},
+    headers: normalizeHeaders(axiosRes.headers),
     data: axiosRes.data,
   };
 }
@@ -78,7 +102,7 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
     let intercepted: InterceptedRequest = {
       url: axiosConfig.url ?? '',
       method: (axiosConfig.method ?? 'get').toLowerCase(),
-      headers: (axiosConfig.headers as unknown as Record<string, string>) ?? {},
+      headers: normalizeHeaders(axiosConfig.headers),
       params: axiosConfig.params as Record<string, unknown> | undefined,
       data: axiosConfig.data as unknown,
     };
@@ -104,6 +128,8 @@ export function createApiClient(config: ApiClientConfig): ApiClient {
         intercepted = interceptor(intercepted);
       }
 
+      axiosResponse.status = intercepted.status;
+      axiosResponse.headers = intercepted.headers as typeof axiosResponse.headers;
       axiosResponse.data = intercepted.data;
       return axiosResponse;
     },
