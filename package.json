@@ -1,6 +1,6 @@
 {
   "name": "@ciscode/api-kit",
-  "version": "0.0.0",
+  "version": "0.0.1",
   "description": "Typed HTTP client for TypeScript — wraps Axios with zero leaky abstractions.",
   "license": "MIT",
   "private": false,
